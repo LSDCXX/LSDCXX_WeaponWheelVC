@@ -6,6 +6,12 @@ Hold a key, swipe with the mouse to highlight a weapon, and release to switch.
 
 ---
 
+## Pictures
+
+<img width="797" height="700" alt="屏幕截图 2026-09-12 153950" src="https://github.com/user-attachments/assets/2d1f92a4-1a6f-47af-8aea-aa54c8db5727" />
+
+---
+
 ## Features
 
 - **Vice City 80s Synthwave Aesthetics**: Built with dual-tone neon glowing rings (Cyan `#00EBEF` & Magenta `#E6148C`), smooth sector highlighting, and no seams or banding artifacts.
