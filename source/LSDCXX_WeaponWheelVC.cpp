@@ -460,16 +460,23 @@ static void LoadWeaponIcons()
         return;
     gIconsTried = true;
 
-    char gameDir[MAX_PATH] = {};
-    GetModuleFileNameA(NULL, gameDir, MAX_PATH);
-    char* slash = strrchr(gameDir, '\\');
+    // 获取当前 ASI 模块所在的绝对目录
+    char asiDir[MAX_PATH] = {};
+    HMODULE hModule = NULL;
+    GetModuleHandleExA(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCSTR>(&LoadWeaponIcons),
+        &hModule
+    );
+    GetModuleFileNameA(hModule, asiDir, MAX_PATH);
+    char* slash = strrchr(asiDir, '\\');
     if (slash)
-        *slash = 0;
+        *slash = '\0';
 
     int found = 0;
     for (int i = 0; i <= MAX_WEAPON_TYPE; ++i) {
         char path[MAX_PATH] = {};
-        sprintf_s(path, "%s\\models\\weapvww\\w%02d.png", gameDir, i);
+        sprintf_s(path, "%s\\weapvww\\w%02d.png", asiDir, i);
 
         RwTexture* tex = CreateTextureFromPng(path);
         if (tex) {
@@ -518,7 +525,6 @@ static inline void Set2DVertex(RwIm2DVertex& v, float x, float y, CRGBA col)
     RwIm2DVertexSetIntRGBA(&v, col.r, col.g, col.b, col.a);
 }
 
-// 纯净实心圆
 static void DrawRwCircleFan(float cx, float cy, float radius, int steps, CRGBA color)
 {
     if (steps < 3 || steps > 120) return;
@@ -542,7 +548,6 @@ static void DrawRwCircleFan(float cx, float cy, float radius, int steps, CRGBA c
     RwIm2DRenderPrimitive(rwPRIMTYPETRIFAN, verts.data(), static_cast<RwInt32>(verts.size()));
 }
 
-// 纯净圆环扇区（Triangle Strip）
 static void DrawRwRingSector(float cx, float cy, float r0, float r1,
     float a0Deg, float a1Deg, int steps, CRGBA color)
 {
@@ -572,13 +577,11 @@ static void DrawRwRingSector(float cx, float cy, float r0, float r1,
     RwIm2DRenderPrimitive(rwPRIMTYPETRISTRIP, verts.data(), vertCount);
 }
 
-// 完整圆环描边
 static void DrawRwCircleOutline(float cx, float cy, float radius, float halfThick, int steps, CRGBA color)
 {
     DrawRwRingSector(cx, cy, radius - halfThick, radius + halfThick, 0.0f, 360.0f, steps, color);
 }
 
-// 放射状分割线
 static void DrawRwSpoke(float cx, float cy, float r0, float r1,
     float angleDeg, float halfThick, CRGBA color)
 {
@@ -672,22 +675,20 @@ static void DrawWheel()
     {
         float a0 = -90.0f + sector * gSelectedSlot;
         float a1 = a0 + sector;
-        // 纯白高光切片
         DrawRwRingSector(cx, cy, r0, r1, a0, a1, 32, CRGBA(255, 255, 255, 140));
-        // 外弧纯白强化细线
         DrawRwRingSector(cx, cy, r1 - SCREEN_MULTIPLIER(2.5f), r1, a0, a1, 32, CRGBA(255, 255, 255, 255));
     }
 
     // 4. 中心圆深色遮罩
     DrawRwCircleFan(cx, cy, r0, 64, CRGBA(8, 6, 14, 180));
 
-    // 5. 放射状分割线（边框同款淡粉色）
+    // 5. 放射状分割线（淡粉紫：RGB 255, 175, 235）
     for (int i = 0; i < count; ++i) {
         float ang = -90.0f + sector * i;
         DrawRwSpoke(cx, cy, r0, r1, ang, spokeHalf, CRGBA(255, 175, 235, 75));
     }
 
-    // 6. 内外双圈光环（提取自图标外框的柔和淡粉紫：RGB 255, 175, 235）
+    // 6. 内外双圈光环（图标框淡粉紫：RGB 255, 175, 235）
     DrawRwCircleOutline(cx, cy, r0, SCREEN_MULTIPLIER(1.6f), 64, CRGBA(255, 175, 235, 220));
     DrawRwCircleOutline(cx, cy, r1, SCREEN_MULTIPLIER(1.6f), 64, CRGBA(255, 175, 235, 230));
 
@@ -708,9 +709,7 @@ static void DrawWheel()
         if (!sprite || !info.hasWeapon)
             continue;
 
-        // 放大 1.2 倍后：默认 101.0f，选中 125.0f
         float iconSize = SCREEN_MULTIPLIER(selected ? 125.0f : 101.0f);
-
         DrawWeaponIcon(info.type, ix, iy, iconSize, CRGBA(255, 255, 255, 255));
     }
 
