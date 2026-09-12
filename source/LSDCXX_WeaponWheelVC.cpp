@@ -668,30 +668,30 @@ static void DrawWheel()
     // 2. 底盘半透明圆环
     DrawRwRingSector(cx, cy, r0, r1, 0.0f, 360.0f, 64, CRGBA(14, 10, 24, 135));
 
-    // 3. 高亮选中扇区：改为亮白色高光扇区与外边缘纯白细线
+    // 3. 高亮选中扇区：亮白色高光扇区与外边缘纯白描边
     {
         float a0 = -90.0f + sector * gSelectedSlot;
         float a1 = a0 + sector;
-        // 纯白半透明扇区切片
+        // 纯白高光切片
         DrawRwRingSector(cx, cy, r0, r1, a0, a1, 32, CRGBA(255, 255, 255, 140));
-        // 外弧纯白强化描边
+        // 外弧纯白强化细线
         DrawRwRingSector(cx, cy, r1 - SCREEN_MULTIPLIER(2.5f), r1, a0, a1, 32, CRGBA(255, 255, 255, 255));
     }
 
     // 4. 中心圆深色遮罩
     DrawRwCircleFan(cx, cy, r0, 64, CRGBA(8, 6, 14, 180));
 
-    // 5. 放射状分割线
+    // 5. 放射状分割线（边框同款淡粉色）
     for (int i = 0; i < count; ++i) {
         float ang = -90.0f + sector * i;
-        DrawRwSpoke(cx, cy, r0, r1, ang, spokeHalf, CRGBA(0, 235, 255, 60));
+        DrawRwSpoke(cx, cy, r0, r1, ang, spokeHalf, CRGBA(255, 175, 235, 75));
     }
 
-    // 6. 内外双圈霓虹光环
-    DrawRwCircleOutline(cx, cy, r0, SCREEN_MULTIPLIER(1.6f), 64, CRGBA(0, 235, 255, 220));
-    DrawRwCircleOutline(cx, cy, r1, SCREEN_MULTIPLIER(1.4f), 64, CRGBA(185, 75, 245, 160));
+    // 6. 内外双圈光环（提取自图标外框的柔和淡粉紫：RGB 255, 175, 235）
+    DrawRwCircleOutline(cx, cy, r0, SCREEN_MULTIPLIER(1.6f), 64, CRGBA(255, 175, 235, 220));
+    DrawRwCircleOutline(cx, cy, r1, SCREEN_MULTIPLIER(1.6f), 64, CRGBA(255, 175, 235, 230));
 
-    // 7. 绘制武器图标
+    // 7. 绘制武器图标（尺寸整体放大 1.2 倍）
     for (int i = 0; i < count; ++i) {
         float a0 = -90.0f + sector * i;
         float a1 = a0 + sector;
@@ -708,7 +708,8 @@ static void DrawWheel()
         if (!sprite || !info.hasWeapon)
             continue;
 
-        float iconSize = SCREEN_MULTIPLIER(selected ? 104.0f : 84.0f);
+        // 放大 1.2 倍后：默认 101.0f，选中 125.0f
+        float iconSize = SCREEN_MULTIPLIER(selected ? 125.0f : 101.0f);
 
         DrawWeaponIcon(info.type, ix, iy, iconSize, CRGBA(255, 255, 255, 255));
     }
@@ -720,16 +721,18 @@ static void DrawWheel()
         bool hasAmmo = gSettings.showAmmo && sel.hasWeapon && sel.type != WEAPONTYPE_UNARMED && sel.ammo > 0;
 
         BeginText();
+        // 武器名字：纯白色
         CFont::SetFontStyle(FONT_STANDARD);
         CFont::SetCentreOn();
         CFont::SetScale(SCREEN_MULTIPLIER(0.72f), SCREEN_MULTIPLIER(1.35f));
-        CFont::SetColor(CRGBA(0, 240, 255, 255));
-        CFont::SetDropColor(CRGBA(10, 20, 30, 220));
+        CFont::SetColor(CRGBA(255, 255, 255, 255));
+        CFont::SetDropColor(CRGBA(10, 10, 15, 230));
         CFont::SetDropShadowPosition(2);
 
         float nameY = hasAmmo ? (cy - SCREEN_MULTIPLIER(20.0f)) : (cy - SCREEN_MULTIPLIER(8.0f));
         CFont::PrintString(cx, nameY, name);
 
+        // 弹药数字：霓虹粉色（Neon Pink）
         if (hasAmmo) {
             wchar_t ammoBuf[16];
             swprintf(ammoBuf, 16, L"%u", sel.ammo);
@@ -737,8 +740,8 @@ static void DrawWheel()
             CFont::SetSlant(0.0f);
             CFont::SetCentreOn();
             CFont::SetScale(SCREEN_MULTIPLIER(0.60f), SCREEN_MULTIPLIER(1.15f));
-            CFont::SetColor(CRGBA(255, 235, 80, 255));
-            CFont::SetDropColor(CRGBA(20, 10, 0, 220));
+            CFont::SetColor(CRGBA(255, 105, 180, 255));
+            CFont::SetDropColor(CRGBA(20, 5, 15, 220));
             CFont::SetDropShadowPosition(2);
             CFont::PrintString(cx, cy + SCREEN_MULTIPLIER(14.0f), ammoBuf);
         }
