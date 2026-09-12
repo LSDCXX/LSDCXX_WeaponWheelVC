@@ -46,10 +46,12 @@ struct Settings {
     int allowInVehicle = 0;
     int showAmmo = 1;
     int showWeaponName = 1;
+    int disableVanillaCycle = 1;
     int enableBackgroundBlur = 1;
     float wheelRadius = 280.0f;
     float wheelInnerRadius = 110.0f;
     float selectDeadzone = 30.0f;
+    float iconScale = 1.0f;
 };
 
 static Settings gSettings;
@@ -84,7 +86,7 @@ static CSprite2d gWeaponIcons[MAX_WEAPON_TYPE + 1];
 static bool gIconsTried = false;
 static bool gIconsReady = false;
 
-// 动态武器名称数组
+// 动态武器名称数组（纯 INI 控制，无硬编码）
 static std::wstring gWeaponNames[MAX_WEAPON_TYPE + 1];
 
 // ---------------------------------------------------------------------------
@@ -130,8 +132,17 @@ static void CollectSlots(CPlayerPed* player, std::vector<SlotInfo>& out)
         eWeaponType type = weapon.m_eWeaponType;
         const unsigned int ammo = weapon.m_nAmmoTotal;
         const bool isUnarmedSlot = (slot == 0);
+
+        // 过滤 16(投射弹头) 与 35(飞机机炮)
+        if (type == 16 || type == 35)
+            continue;
+
+        // 特殊道具（Slot 9 引爆器或照相机）
+        const bool isSpecialTool = (slot == 9 && (type == 34 || type == 36));
+
         const bool realWeapon = (type != WEAPONTYPE_UNARMED && type <= WEAPONTYPE_ANYWEAPON)
             || ammo > 0
+            || isSpecialTool
             || slot == currentSlot;
 
         if (!isUnarmedSlot && !realWeapon && gSettings.skipEmptySlots)
@@ -180,6 +191,11 @@ static void ApplySelectedWeapon()
     if (player->m_nCurrentWeapon != targetSlot) {
         player->SetCurrentWeapon(targetSlot);
         player->MakeChangesForNewWeapon(targetSlot);
+
+        // 修复：VC Plugin-SDK 中的成员名为 m_eWeaponState
+        if (targetSlot == 2 && player->m_aWeapons[2].m_eWeaponType == WEAPONTYPE_DETONATOR_GRENADE) {
+            player->m_aWeapons[2].m_eWeaponState = WEAPONSTATE_READY;
+        }
     }
 }
 
@@ -460,7 +476,6 @@ static void LoadWeaponIcons()
         return;
     gIconsTried = true;
 
-    // 获取当前 ASI 模块所在的绝对目录
     char asiDir[MAX_PATH] = {};
     HMODULE hModule = NULL;
     GetModuleHandleExA(
@@ -475,7 +490,7 @@ static void LoadWeaponIcons()
 
     int found = 0;
     for (int i = 0; i <= MAX_WEAPON_TYPE; ++i) {
-        char path[MAX_PATH] = {};
+        char path[MAX_PATH] = {}; // 加上显式初始化以消除警告
         sprintf_s(path, "%s\\weapvww\\w%02d.png", asiDir, i);
 
         RwTexture* tex = CreateTextureFromPng(path);
@@ -692,7 +707,7 @@ static void DrawWheel()
     DrawRwCircleOutline(cx, cy, r0, SCREEN_MULTIPLIER(1.6f), 64, CRGBA(255, 175, 235, 220));
     DrawRwCircleOutline(cx, cy, r1, SCREEN_MULTIPLIER(1.6f), 64, CRGBA(255, 175, 235, 230));
 
-    // 7. 绘制武器图标（尺寸整体放大 1.2 倍）
+    // 7. 绘制武器图标（应用 IconScale 缩放）
     for (int i = 0; i < count; ++i) {
         float a0 = -90.0f + sector * i;
         float a1 = a0 + sector;
@@ -709,7 +724,8 @@ static void DrawWheel()
         if (!sprite || !info.hasWeapon)
             continue;
 
-        float iconSize = SCREEN_MULTIPLIER(selected ? 125.0f : 101.0f);
+        float baseSize = 101.0f * gSettings.iconScale;
+        float iconSize = SCREEN_MULTIPLIER(selected ? (baseSize * 1.238f) : baseSize);
         DrawWeaponIcon(info.type, ix, iy, iconSize, CRGBA(255, 255, 255, 255));
     }
 
@@ -720,16 +736,18 @@ static void DrawWheel()
         bool hasAmmo = gSettings.showAmmo && sel.hasWeapon && sel.type != WEAPONTYPE_UNARMED && sel.ammo > 0;
 
         BeginText();
-        // 武器名字：纯白色
-        CFont::SetFontStyle(FONT_STANDARD);
-        CFont::SetCentreOn();
-        CFont::SetScale(SCREEN_MULTIPLIER(0.72f), SCREEN_MULTIPLIER(1.35f));
-        CFont::SetColor(CRGBA(255, 255, 255, 255));
-        CFont::SetDropColor(CRGBA(10, 10, 15, 230));
-        CFont::SetDropShadowPosition(2);
+        // 武器名字：纯白
+        if (gSettings.showWeaponName && name && name[0] != L'\0') {
+            CFont::SetFontStyle(FONT_STANDARD);
+            CFont::SetCentreOn();
+            CFont::SetScale(SCREEN_MULTIPLIER(0.72f), SCREEN_MULTIPLIER(1.35f));
+            CFont::SetColor(CRGBA(255, 255, 255, 255));
+            CFont::SetDropColor(CRGBA(10, 10, 15, 230));
+            CFont::SetDropShadowPosition(2);
 
-        float nameY = hasAmmo ? (cy - SCREEN_MULTIPLIER(20.0f)) : (cy - SCREEN_MULTIPLIER(8.0f));
-        CFont::PrintString(cx, nameY, name);
+            float nameY = hasAmmo ? (cy - SCREEN_MULTIPLIER(20.0f)) : (cy - SCREEN_MULTIPLIER(8.0f));
+            CFont::PrintString(cx, nameY, const_cast<wchar_t*>(name));
+        }
 
         // 弹药数字：霓虹粉色（Neon Pink）
         if (hasAmmo) {
@@ -752,6 +770,11 @@ static void DrawWheel()
 // ---------------------------------------------------------------------------
 static void ProcessWheel()
 {
+    if (gSettings.disableVanillaCycle && gWheelOpen) {
+        CPad::NewMouseControllerState.wheelUp = 0;
+        CPad::NewMouseControllerState.wheelDown = 0;
+    }
+
     if (!IsGameplayAllowed()) {
         if (gWheelOpen)
             CloseWheel(false);
@@ -797,17 +820,22 @@ struct LSDCXX_WeaponWheelVC {
             gSettings.allowInVehicle = ini.ReadInteger("configs", "AllowInVehicle", 0);
             gSettings.showAmmo = ini.ReadInteger("configs", "ShowAmmo", 1);
             gSettings.showWeaponName = ini.ReadInteger("configs", "ShowWeaponName", 1);
+            gSettings.disableVanillaCycle = ini.ReadInteger("configs", "DisableVanillaCycle", 1);
             gSettings.enableBackgroundBlur = ini.ReadInteger("configs", "EnableBackgroundBlur", 1);
             gSettings.wheelRadius = ini.ReadFloat("configs", "WheelRadius", 280.0f);
             gSettings.wheelInnerRadius = ini.ReadFloat("configs", "WheelInnerRadius", 110.0f);
             gSettings.selectDeadzone = ini.ReadFloat("configs", "SelectDeadzone", 30.0f);
+            gSettings.iconScale = ini.ReadFloat("configs", "IconScale", 1.0f);
 
             if (gSettings.slowMotionSpeed < 0.01f) gSettings.slowMotionSpeed = 0.01f;
             if (gSettings.slowMotionSpeed > 1.0f) gSettings.slowMotionSpeed = 1.0f;
             if (gSettings.wheelInnerRadius < 40.0f) gSettings.wheelInnerRadius = 40.0f;
             if (gSettings.wheelRadius <= gSettings.wheelInnerRadius)
                 gSettings.wheelRadius = gSettings.wheelInnerRadius + 80.0f;
+            if (gSettings.iconScale < 0.3f) gSettings.iconScale = 0.3f;
+            if (gSettings.iconScale > 3.0f) gSettings.iconScale = 3.0f;
 
+            // 纯 INI 读取武器名字，自适应 CP_ACP / CP_UTF8，无内置备用名
             for (int i = 0; i <= MAX_WEAPON_TYPE; ++i) {
                 char key[16];
                 sprintf_s(key, "Weapon%02d", i);
@@ -820,7 +848,15 @@ struct LSDCXX_WeaponWheelVC {
                         gWeaponNames[i] = wbuf.data();
                     }
                     else {
-                        gWeaponNames[i] = L"";
+                        wlen = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, NULL, 0);
+                        if (wlen > 0) {
+                            std::vector<wchar_t> wbuf(wlen);
+                            MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wbuf.data(), wlen);
+                            gWeaponNames[i] = wbuf.data();
+                        }
+                        else {
+                            gWeaponNames[i] = L"";
+                        }
                     }
                 }
                 else {
