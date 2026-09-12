@@ -46,7 +46,7 @@ struct Settings {
     int allowInVehicle = 0;
     int showAmmo = 1;
     int showWeaponName = 1;
-    int disableVanillaCycle = 1;
+    int enableBackgroundBlur = 1;
     float wheelRadius = 280.0f;
     float wheelInnerRadius = 110.0f;
     float selectDeadzone = 30.0f;
@@ -84,7 +84,7 @@ static CSprite2d gWeaponIcons[MAX_WEAPON_TYPE + 1];
 static bool gIconsTried = false;
 static bool gIconsReady = false;
 
-// 动态武器名称数组（自 INI 文件读取解析）
+// 动态武器名称数组
 static std::wstring gWeaponNames[MAX_WEAPON_TYPE + 1];
 
 // ---------------------------------------------------------------------------
@@ -348,16 +348,6 @@ static int __fastcall LookAroundUpDownHook(CPad* _this, void* /*edx*/)
     return _this->LookAroundUpDown();
 }
 
-static bool __fastcall CycleWeaponLeftHook(CPad* /*_this*/, void* /*edx*/)
-{
-    return false;
-}
-
-static bool __fastcall CycleWeaponRightHook(CPad* /*_this*/, void* /*edx*/)
-{
-    return false;
-}
-
 static void __cdecl UpdateMouseHook()
 {
     plugin::CallDynGlobal(ADDRESS_BY_VERSION(0x4AD820, 0x4AD840, 0x4AD6F0));
@@ -369,11 +359,6 @@ static void __cdecl UpdateMouseHook()
 
 static void InstallHooks()
 {
-    if (gSettings.disableVanillaCycle) {
-        patch::ReplaceFunction(ADDRESS_BY_VERSION(0x4AA560, 0x4AA580, 0x4AA430), CycleWeaponLeftHook);
-        patch::ReplaceFunction(ADDRESS_BY_VERSION(0x4AA530, 0x4AA550, 0x4AA400), CycleWeaponRightHook);
-    }
-
     patch::RedirectCall(ADDRESS_BY_VERSION(0x4AB6CA, 0x4AB6EA, 0x4AB59A), UpdateMouseHook);
 
     static const uintptr_t kLookLR_10[] = { 0x4711F2, 0x47C062, 0x481F35, 0x482935 };
@@ -483,7 +468,7 @@ static void LoadWeaponIcons()
 
     int found = 0;
     for (int i = 0; i <= MAX_WEAPON_TYPE; ++i) {
-        char path[MAX_PATH] = {}; // 显式初始化消除 Lint 警告
+        char path[MAX_PATH] = {};
         sprintf_s(path, "%s\\models\\weapvww\\w%02d.png", gameDir, i);
 
         RwTexture* tex = CreateTextureFromPng(path);
@@ -522,7 +507,7 @@ static CSprite2d* GetWeaponSprite(eWeaponType type)
 }
 
 // ---------------------------------------------------------------------------
-// RenderWare Native 2D Primitive Drawing (Direct HW Rasterization)
+// RenderWare Native 2D Primitive Drawing
 // ---------------------------------------------------------------------------
 static inline void Set2DVertex(RwIm2DVertex& v, float x, float y, CRGBA col)
 {
@@ -557,7 +542,7 @@ static void DrawRwCircleFan(float cx, float cy, float radius, int steps, CRGBA c
     RwIm2DRenderPrimitive(rwPRIMTYPETRIFAN, verts.data(), static_cast<RwInt32>(verts.size()));
 }
 
-// 纯净圆环扇区（Triangle Strip，无条纹缝隙）
+// 纯净圆环扇区（Triangle Strip）
 static void DrawRwRingSector(float cx, float cy, float r0, float r1,
     float a0Deg, float a1Deg, int steps, CRGBA color)
 {
@@ -666,8 +651,15 @@ static void DrawWheel()
     const float r0 = SCREEN_MULTIPLIER(gSettings.wheelInnerRadius);
     const float r1 = SCREEN_MULTIPLIER(gSettings.wheelRadius);
 
-    // 1. 全屏微弱背景变暗
-    CSprite2d::DrawRect(CRect(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT), CRGBA(8, 4, 18, 55));
+    // 1. 全屏背景磨砂虚化与暗角
+    if (gSettings.enableBackgroundBlur) {
+        CSprite2d::DrawRect(CRect(-2.0f, -2.0f, SCREEN_WIDTH + 2.0f, SCREEN_HEIGHT + 2.0f), CRGBA(5, 0, 15, 30));
+        CSprite2d::DrawRect(CRect(2.0f, 2.0f, SCREEN_WIDTH - 2.0f, SCREEN_HEIGHT - 2.0f), CRGBA(0, 5, 12, 30));
+        CSprite2d::DrawRect(CRect(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT), CRGBA(10, 6, 20, 45));
+    }
+    else {
+        CSprite2d::DrawRect(CRect(0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT), CRGBA(8, 4, 18, 55));
+    }
     CSprite2d::SetRecipNearClip();
 
     const float sector = 360.0f / count;
@@ -676,16 +668,17 @@ static void DrawWheel()
     // 2. 底盘半透明圆环
     DrawRwRingSector(cx, cy, r0, r1, 0.0f, 360.0f, 64, CRGBA(14, 10, 24, 135));
 
-    // 3. 高亮选中扇区（霓虹粉发光）
+    // 3. 高亮选中扇区：改为亮白色高光扇区与外边缘纯白细线
     {
         float a0 = -90.0f + sector * gSelectedSlot;
         float a1 = a0 + sector;
-        DrawRwRingSector(cx, cy, r0, r1, a0, a1, 32, CRGBA(230, 20, 140, 155));
-        // 外弧强化描边
-        DrawRwRingSector(cx, cy, r1 - SCREEN_MULTIPLIER(2.5f), r1, a0, a1, 32, CRGBA(255, 120, 210, 255));
+        // 纯白半透明扇区切片
+        DrawRwRingSector(cx, cy, r0, r1, a0, a1, 32, CRGBA(255, 255, 255, 140));
+        // 外弧纯白强化描边
+        DrawRwRingSector(cx, cy, r1 - SCREEN_MULTIPLIER(2.5f), r1, a0, a1, 32, CRGBA(255, 255, 255, 255));
     }
 
-    // 4. 中心深色遮罩
+    // 4. 中心圆深色遮罩
     DrawRwCircleFan(cx, cy, r0, 64, CRGBA(8, 6, 14, 180));
 
     // 5. 放射状分割线
@@ -715,12 +708,7 @@ static void DrawWheel()
         if (!sprite || !info.hasWeapon)
             continue;
 
-        float iconSize = SCREEN_MULTIPLIER(selected ? 104.0f : 80.0f);
-
-        if (selected) {
-            DrawRwCircleFan(ix, iy, iconSize * 0.58f, 32, CRGBA(255, 255, 255, 65));
-            DrawRwCircleOutline(ix, iy, iconSize * 0.58f, SCREEN_MULTIPLIER(1.8f), 32, CRGBA(255, 255, 255, 230));
-        }
+        float iconSize = SCREEN_MULTIPLIER(selected ? 104.0f : 84.0f);
 
         DrawWeaponIcon(info.type, ix, iy, iconSize, CRGBA(255, 255, 255, 255));
     }
@@ -732,7 +720,6 @@ static void DrawWheel()
         bool hasAmmo = gSettings.showAmmo && sel.hasWeapon && sel.type != WEAPONTYPE_UNARMED && sel.ammo > 0;
 
         BeginText();
-        // 武器名
         CFont::SetFontStyle(FONT_STANDARD);
         CFont::SetCentreOn();
         CFont::SetScale(SCREEN_MULTIPLIER(0.72f), SCREEN_MULTIPLIER(1.35f));
@@ -743,7 +730,6 @@ static void DrawWheel()
         float nameY = hasAmmo ? (cy - SCREEN_MULTIPLIER(20.0f)) : (cy - SCREEN_MULTIPLIER(8.0f));
         CFont::PrintString(cx, nameY, name);
 
-        // 弹药数字
         if (hasAmmo) {
             wchar_t ammoBuf[16];
             swprintf(ammoBuf, 16, L"%u", sel.ammo);
@@ -809,7 +795,7 @@ struct LSDCXX_WeaponWheelVC {
             gSettings.allowInVehicle = ini.ReadInteger("configs", "AllowInVehicle", 0);
             gSettings.showAmmo = ini.ReadInteger("configs", "ShowAmmo", 1);
             gSettings.showWeaponName = ini.ReadInteger("configs", "ShowWeaponName", 1);
-            gSettings.disableVanillaCycle = ini.ReadInteger("configs", "DisableVanillaCycle", 1);
+            gSettings.enableBackgroundBlur = ini.ReadInteger("configs", "EnableBackgroundBlur", 1);
             gSettings.wheelRadius = ini.ReadFloat("configs", "WheelRadius", 280.0f);
             gSettings.wheelInnerRadius = ini.ReadFloat("configs", "WheelInnerRadius", 110.0f);
             gSettings.selectDeadzone = ini.ReadFloat("configs", "SelectDeadzone", 30.0f);
@@ -820,7 +806,6 @@ struct LSDCXX_WeaponWheelVC {
             if (gSettings.wheelRadius <= gSettings.wheelInnerRadius)
                 gSettings.wheelRadius = gSettings.wheelInnerRadius + 80.0f;
 
-            // 从 INI 读取武器名字，转换并存入宽字符数组
             for (int i = 0; i <= MAX_WEAPON_TYPE; ++i) {
                 char key[16];
                 sprintf_s(key, "Weapon%02d", i);
