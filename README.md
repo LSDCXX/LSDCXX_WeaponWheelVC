@@ -1,65 +1,78 @@
-# VoidWeaponWheel.VC
+# LSDCXX_WeaponWheelVC
 
-GTA Vice City weapon wheel ASI, based on the VoidWeaponWheel (SA) concept and built with Plugin-SDK.
+A GTA Vice City weapon wheel ASI plugin built with [Plugin-SDK](https://github.com/DK22Pac/plugin-sdk) and rendered via native RenderWare 2D primitives. Features a custom 80s synthwave neon visual style (cyan & magenta) tailored specifically for Vice City.
 
-Hold a key, aim the radial wheel with mouse / right stick, release to equip.
+Hold a key, swipe with the mouse to highlight a weapon, and release to switch.
+
+---
 
 ## Features
 
-- Radial wheel for all 10 VC weapon slots (unarmed, melee, thrown, pistol, shotgun, SMG, assault, sniper, heavy, special)
-- Icons from the game's HUD TXD (`CHud::Sprites`)
-- Weapon name + ammo in the center / under each icon
-- Optional slow motion while the wheel is open
-- Disables vanilla weapon cycling so the wheel fully replaces it
-- Blocks firing / camera stick while the wheel is open
-- Optional GInputVC support (L2+R2 chord + right-stick aim)
-- `VoidWeaponWheel.ini` configuration
+- **Vice City 80s Synthwave Aesthetics**: Built with dual-tone neon glowing rings (Cyan `#00EBEF` & Magenta `#E6148C`), smooth sector highlighting, and no seams or banding artifacts.
+- **Hardware-Accelerated 2D Rendering**: Uses native RenderWare 2D immediate mode primitives (`RwIm2DVertex` / `RwIm2DRenderPrimitive`) for seamless geometry and anti-aliased arcs.
+- **Standalone Custom Icons**: Loads external PNG textures (`models\weapvww\w00.png` ~ `w36.png`) via `stb_image`, preventing conflicts with `hud.txd`.
+- **Bullet Time**: Optional slow-motion effect while the wheel is open (default `0.15x`).
+- **Fully Customizable Localization**: Weapon display names can be configured directly in `LSDCXX_WeaponWheelVC.ini` without modifying source code or GXT tables.
+- **Seamless Control Interception**: Disables original weapon cycling, suppresses combat keys/clicks, and locks mouse look-around while selecting.
+- **Smart Category Filtering**: Option to hide empty weapon slots (`SkipEmptySlots`) to keep the wheel compact.
+
+---
 
 ## Requirements
 
-- GTA Vice City **1.0** (10EN). 11EN / Steam addresses are also wired via Plugin-SDK `ADDRESS_BY_VERSION`.
+- **GTA Vice City** (Compatible with **1.0 EN**, **1.1 EN**, and **Steam**)
 - [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) (`scripts/` or `plugins/` folder)
-- [Plugin-SDK](https://github.com/DK22Pac/plugin-sdk) with `PLUGIN_SDK_DIR` environment variable set, built for VC (`Plugin_VC.lib`)
-- Optional: [GInputVC](https://gtaforums.com/topic/824734-ginput/) for gamepad
+- Custom weapon icons located at: `Grand Theft Auto Vice City\models\weapvww\` (`w00.png` - `w36.png`)
 
-## Install
+---
 
-1. Build `Release GTA-VC` (or drop a prebuilt `VoidWeaponWheel.VC.asi`).
-2. Copy `VoidWeaponWheel.VC.asi` and `VoidWeaponWheel.ini` into `GTA VC\scripts\`.
+## Installation
+
+1. Place `LSDCXX_WeaponWheelVC.asi` and `LSDCXX_WeaponWheelVC.ini` into your game's `scripts\` (or `plugins\`) directory.
+2. Ensure custom weapon icons are placed in `models\weapvww\` inside your GTA Vice City directory.
 3. Launch the game.
 
-## Controls (defaults)
+---
+
+## Controls (Default)
 
 | Action | Input |
-|--------|--------|
-| Open wheel | Hold **Q** |
-| Aim | Mouse / right stick |
-| Equip | Release **Q** |
-| Gamepad open | Hold **L2 + R2** (with GInputVC) |
+|---|---|
+| **Open Wheel** | Hold **Q** |
+| **Select Slot** | Move **Mouse** |
+| **Equip & Close** | Release **Q** |
 
-## Build (MSVC)
+---
 
-```bat
-set PLUGIN_SDK_DIR=Q:\path\to\plugin-sdk
-msbuild ASI\VoidWeaponWheelVC\VoidWeaponWheelVC.sln /p:Configuration="Release GTA-VC" /p:Platform=Win32
-```
+## Configuration (`LSDCXX_WeaponWheelVC.ini`)
 
-Plugin-SDK must already be built for GTA VC (`output\lib\Plugin_VC.lib`).
+### `[configs]`
 
-## Config (`VoidWeaponWheel.ini`)
+| Setting | Default | Description |
+|---|---|---|
+| `PrimaryKey` | `81` (`Q`) | Virtual key code to open the wheel. |
+| `SecondaryKey` | `0` | Alternate key (set `0` to disable). |
+| `EnableSlowMotion` | `1` | Enables bullet time while the wheel is held (`1` = On, `0` = Off). |
+| `SlowMotionSpeed` | `0.15` | Game timescale multiplier while active (`0.01` ~ `1.0`). |
+| `InvertMouseVertical` | `0` | Inverts vertical mouse aim direction (`1` = Inverted, `0` = Normal). |
+| `SkipEmptySlots` | `1` | Hides empty categories (`1` = Compact, `0` = Show all 10 slots). |
+| `AllowInVehicle` | `0` | Allows opening the wheel while driving (`1` = Allowed, `0` = Blocked). |
+| `ShowAmmo` | `1` | Displays remaining ammo in the wheel center (`1` = Show, `0` = Hide). |
+| `ShowWeaponName` | `1` | Displays weapon name in the wheel center (`1` = Show, `0` = Hide). |
+| `DisableVanillaCycle`| `1` | Disables vanilla mouse scroll / key cycling (`1` = Disabled). |
+| `WheelRadius` | `280.0` | Outer radius of the wheel. |
+| `WheelInnerRadius` | `110.0` | Inner cutout radius of the wheel center. |
+| `SelectDeadzone` | `30.0` | Mouse deadzone distance before changing the highlighted slot. |
 
-| Key | Default | Meaning |
-|-----|---------|---------|
-| PrimaryKey | 81 (`Q`) | Virtual-key held to open |
-| SecondaryKey | 0 | Alternate key (0 = off) |
-| EnableSlowMotion | 1 | Slow the game while open |
-| SlowMotionSpeed | 0.15 | Time scale while open |
-| SkipEmptySlots | 0 | Hide unused categories |
-| AllowInVehicle | 0 | Open while driving |
-| DisableVanillaCycle | 1 | Replace original weapon cycling |
-| WheelRadius / WheelInnerRadius | 120 / 55 | Ring size (640x480 base) |
-| GInputOpenButton | 0 | 0 = L2+R2, 2 = Circle+L1 |
+### `[names]`
 
-## Notes vs SA version
+Customize display strings for any language (uses native system encoding / `CP_ACP`):
 
-The SA mod splits UI (CLEO) and input (ASI). This VC port is a **single ASI**: input, hooks, and drawing all live in `VoidWeaponWheelVC.cpp` using Plugin-SDK events (`gameProcessEvent`, `drawHudEvent`, `initRwEvent`).
+```ini
+[names]
+Weapon00=Unarmed
+Weapon01=Brass Knuckles
+Weapon02=Screwdriver
+...
+Weapon26=M4
+Weapon33=Minigun
