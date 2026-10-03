@@ -31,6 +31,11 @@
 
 #include "../third_party/IniReader/IniReader.h"
 
+// GInput integration — talk to the Vice City build of GInput (GInputVC.asi).
+// GINPUT_COMPILE_VC_VERSION must be defined *before* the API header is included.
+#define GINPUT_COMPILE_VC_VERSION
+#include "../third_party/GInputAPI/GInputAPI.h"
+
 using namespace plugin;
 
 // ---------------------------------------------------------------------------
@@ -48,6 +53,12 @@ struct Settings {
     int showWeaponName = 1;
     int disableVanillaCycle = 1;
     int enableBackgroundBlur = 1;
+    int removeDepletedWeapons = 1;
+    int enableGamepad = 1;
+    int gamepadControlsSet = 0;
+    int gamepadInvertVertical = 0;
+    int gamepadDPadStep = 1;
+    float gamepadDeadzone = 0.25f;
     float wheelRadius = 280.0f;
     float wheelInnerRadius = 110.0f;
     float selectDeadzone = 30.0f;
@@ -67,6 +78,15 @@ static bool gSlowMotionActive = false;
 static float gSavedMouseAccelH = 0.0f;
 static float gSavedMouseAccelV = 0.0f;
 static bool gMouseAccelLocked = false;
+
+// Gamepad (GInput / DirectInput pad) state
+static bool gPadAimActive = false;
+static float gPadAimX = 0.0f;
+static float gPadAimY = 0.0f;
+static bool gPadStepUp = false;
+static bool gPadStepDown = false;
+static IGInputPad* gGInputPad = nullptr;
+static int gGamepadControlsSet = 0;   // 0 = unknown / not detected
 
 static void LoadWeaponIcons();
 static void FreeWeaponIcons();
@@ -122,37 +142,122 @@ static const wchar_t* GetWeaponDisplayName(eWeaponType type)
     return gWeaponNames[type].c_str();
 }
 
+// Melee weapons legitimately carry no ammo, so they must never be treated as empty.
+static bool IsMeleeWeaponType(eWeaponType type)
+{
+    return type >= WEAPONTYPE_BRASSKNUCKLE && type <= WEAPONTYPE_CHAINSAW; // 1 .. 11
+}
+
+// Detonator / camera sit in slot 9 and also work without ammo.
+static bool IsSpecialToolType(eWeaponType type)
+{
+    return type == WEAPONTYPE_DETONATOR || type == WEAPONTYPE_CAMERA;     // 34, 36
+}
+
+static bool WeaponHasAmmo(const CWeapon& weapon)
+{
+    return weapon.m_nAmmoTotal > 0 || weapon.m_nAmmoInClip > 0;
+}
+
+// True when the slot holds something the player can actually use right now.
+// A firearm that has run dry is *not* usable — that is what used to keep empty
+// guns selectable in the wheel and glued to the player.
+static bool IsSlotUsable(const CWeapon& weapon)
+{
+    const eWeaponType type = weapon.m_eWeaponType;
+
+    if (type == WEAPONTYPE_UNARMED)
+        return false;
+    if (static_cast<unsigned int>(type) > MAX_WEAPON_TYPE)
+        return false;
+    // Projectile warheads / vehicle cannon are never real inventory entries.
+    if (type == WEAPONTYPE_ROCKET || type == WEAPONTYPE_HELICANNON)
+        return false;
+    if (IsMeleeWeaponType(type) || IsSpecialToolType(type))
+        return true;
+
+    return WeaponHasAmmo(weapon);
+}
+
+// Drop weapons the player has run out of ammo for, exactly like the vanilla game
+// does when the last round leaves the magazine. Without this the slot keeps its
+// weapon type at 0 ammo and the gun stays in the player's hands forever.
+static void RemoveDepletedWeapons()
+{
+    CPlayerPed* player = FindPlayerPed();
+    if (!player)
+        return;
+
+    bool currentWasRemoved = false;
+
+    for (int slot = 1; slot < MAX_SLOTS; ++slot) {
+        CWeapon& weapon = player->m_aWeapons[slot];
+        const eWeaponType type = weapon.m_eWeaponType;
+
+        if (type == WEAPONTYPE_UNARMED)
+            continue;
+        if (static_cast<unsigned int>(type) > MAX_WEAPON_TYPE)
+            continue;
+        if (IsMeleeWeaponType(type) || IsSpecialToolType(type))
+            continue;
+        if (type == WEAPONTYPE_ROCKET || type == WEAPONTYPE_HELICANNON)
+            continue;
+        if (WeaponHasAmmo(weapon))
+            continue;
+
+        weapon.m_eWeaponType = WEAPONTYPE_UNARMED;
+        weapon.m_eWeaponState = WEAPONSTATE_READY;
+        weapon.m_nAmmoInClip = 0;
+        weapon.m_nAmmoTotal = 0;
+        weapon.m_nNextShotTime = 0;
+
+        if (slot == player->m_nCurrentWeapon)
+            currentWasRemoved = true;
+    }
+
+    if (currentWasRemoved) {
+        // Fall back to the strongest weapon still in the inventory (0 = fists) and
+        // refresh the ped model so the depleted gun visibly leaves the player's hand.
+        int best = 0;
+        for (int slot = MAX_SLOTS - 1; slot >= 1; --slot) {
+            if (IsSlotUsable(player->m_aWeapons[slot])) {
+                best = slot;
+                break;
+            }
+        }
+        player->SetCurrentWeapon(best);
+        player->MakeChangesForNewWeapon(best);
+        player->m_nSelectedWepSlot = static_cast<unsigned char>(best);
+    }
+}
+
 static void CollectSlots(CPlayerPed* player, std::vector<SlotInfo>& out)
 {
     out.clear();
-    const int currentSlot = player->m_nCurrentWeapon;
 
     for (int slot = 0; slot < MAX_SLOTS; ++slot) {
         CWeapon& weapon = player->m_aWeapons[slot];
         eWeaponType type = weapon.m_eWeaponType;
-        const unsigned int ammo = weapon.m_nAmmoTotal;
         const bool isUnarmedSlot = (slot == 0);
 
         // 过滤 16(投射弹头) 与 35(飞机机炮)
-        if (type == 16 || type == 35)
+        if (type == WEAPONTYPE_ROCKET || type == WEAPONTYPE_HELICANNON)
             continue;
 
-        // 特殊道具（Slot 9 引爆器或照相机）
-        const bool isSpecialTool = (slot == 9 && (type == 34 || type == 36));
+        // 只有真正可用的武器（近战 / 特殊道具 / 还有弹药）才算“持有”。
+        // 弹药耗尽的枪械按空槽处理，避免它继续留在轮盘里并被强制装备。
+        const bool usable = isUnarmedSlot || IsSlotUsable(weapon);
 
-        const bool realWeapon = (type != WEAPONTYPE_UNARMED && type <= WEAPONTYPE_ANYWEAPON)
-            || ammo > 0
-            || isSpecialTool
-            || slot == currentSlot;
-
-        if (!isUnarmedSlot && !realWeapon && gSettings.skipEmptySlots)
+        if (!isUnarmedSlot && !usable && gSettings.skipEmptySlots)
             continue;
 
         SlotInfo info{};
         info.slot = slot;
-        info.type = (static_cast<unsigned int>(type) <= MAX_WEAPON_TYPE) ? type : WEAPONTYPE_UNARMED;
-        info.ammo = ammo;
-        info.hasWeapon = isUnarmedSlot || realWeapon;
+        info.type = (usable && static_cast<unsigned int>(type) <= MAX_WEAPON_TYPE)
+            ? type
+            : WEAPONTYPE_UNARMED;
+        info.ammo = usable ? weapon.m_nAmmoTotal : 0u;
+        info.hasWeapon = usable;
         out.push_back(info);
     }
 
@@ -187,10 +292,22 @@ static void ApplySelectedWeapon()
     if (gSelectedSlot < 0 || gSelectedSlot >= static_cast<int>(slots.size()))
         return;
 
-    int targetSlot = slots[gSelectedSlot].slot;
+    const SlotInfo& sel = slots[gSelectedSlot];
+    if (!sel.hasWeapon)
+        return;
+
+    int targetSlot = sel.slot;
+    if (targetSlot < 0 || targetSlot >= MAX_SLOTS)
+        return;
+    // Never force-equip a slot the player cannot actually use (e.g. a dry gun),
+    // otherwise the empty weapon would end up stuck in the player's hands.
+    if (targetSlot != 0 && !IsSlotUsable(player->m_aWeapons[targetSlot]))
+        return;
+
     if (player->m_nCurrentWeapon != targetSlot) {
         player->SetCurrentWeapon(targetSlot);
         player->MakeChangesForNewWeapon(targetSlot);
+        player->m_nSelectedWepSlot = static_cast<unsigned char>(targetSlot);
 
         // 修复：VC Plugin-SDK 中的成员名为 m_eWeaponState
         if (targetSlot == 2 && player->m_aWeapons[2].m_eWeaponType == WEAPONTYPE_DETONATOR_GRENADE) {
@@ -311,6 +428,120 @@ static void CloseWheel(bool applySelection)
 }
 
 // ---------------------------------------------------------------------------
+// Gamepad (GInput aware)
+// ---------------------------------------------------------------------------
+static int QueryGInputControlsSet()
+{
+    if (!gGInputPad)
+        return 0;
+    GINPUT_PAD_SETTINGS padSettings{};
+    padSettings.cbSize = sizeof(GINPUT_PAD_SETTINGS);
+    gGInputPad->SendConstEvent(GINPUT_EVENT_FETCH_PAD_SETTINGS, &padSettings);
+    return static_cast<int>(padSettings.ControlsSet);
+}
+
+static void OnGInputSettingsReload()
+{
+    if (gSettings.gamepadControlsSet > 0)
+        return;
+    gGamepadControlsSet = QueryGInputControlsSet();
+}
+
+static void InitGamepad()
+{
+    gGInputPad = nullptr;
+    gGamepadControlsSet = 0;
+    if (!gSettings.enableGamepad)
+        return;
+
+    IGInputPad* pad = nullptr;
+    if (GInput_Load(&pad) && pad)
+        gGInputPad = pad;
+
+    if (gSettings.gamepadControlsSet > 0)
+        gGamepadControlsSet = gSettings.gamepadControlsSet;
+    else
+        gGamepadControlsSet = QueryGInputControlsSet();
+
+    if (gGInputPad) {
+        gGInputPad->SendEvent(GINPUT_EVENT_REGISTER_SETTINGS_RELOAD_CALLBACK,
+            reinterpret_cast<void*>(&OnGInputSettingsReload));
+    }
+}
+
+// GInput ships 5 control sets but only two are widely used:
+//   1 = PS2 Vice City style -> open the wheel with L2 alone
+//   5 = GTA IV style        -> open the wheel with D-Pad Left
+// Any other / undetected set accepts both, so the wheel always has a pad button.
+static bool IsGamepadWheelButtonDown()
+{
+    if (!gSettings.enableGamepad)
+        return false;
+
+    const CControllerState& state = Pads[0].NewState;
+    const bool l2 = (state.LeftShoulder2 != 0);
+    const bool dpadLeft = (state.DPadLeft != 0);
+
+    switch (gGamepadControlsSet) {
+    case 1:  return l2;
+    case 5:  return dpadLeft;
+    default: return l2 || dpadLeft;
+    }
+}
+
+// Right analog stick -> absolute aim vector, in the same internal convention the
+// mouse pipeline uses (gAimY is negative when aiming up).
+static void ReadGamepadStick()
+{
+    gPadAimActive = false;
+    if (!gSettings.enableGamepad || !gWheelOpen)
+        return;
+
+    const CControllerState& state = Pads[0].NewState;
+    float nx = static_cast<float>(state.RightStickX) / 128.0f;
+    float ny = static_cast<float>(state.RightStickY) / 128.0f;
+    if (gSettings.gamepadInvertVertical)
+        ny = -ny;
+
+    const float magnitude = std::sqrt(nx * nx + ny * ny);
+    const float deadzone = gSettings.gamepadDeadzone;
+    if (magnitude < deadzone || magnitude < 0.0001f)
+        return;
+
+    const float clamped = (magnitude > 1.0f) ? 1.0f : magnitude;
+    const float t = (clamped - deadzone) / (1.0f - deadzone);
+    const float length = gSettings.wheelRadius * 1.15f * ((t < 0.0f) ? 0.0f : t);
+
+    gPadAimX = (nx / magnitude) * length;
+    gPadAimY = -(ny / magnitude) * length; // stick up (+) -> aim up (-)
+    gPadAimActive = true;
+}
+
+// Rotate the aim vector by whole sectors so D-Pad Up/Down can step slot by slot.
+static void RotateAimBySector(int steps, int count)
+{
+    if (count <= 0)
+        return;
+
+    const float sector = 360.0f / static_cast<float>(count);
+    float length = std::sqrt(gAimX * gAimX + gAimY * gAimY);
+    float angleDeg;
+
+    if (length < gSettings.selectDeadzone) {
+        length = gSettings.wheelRadius * 0.8f;
+        angleDeg = sector * static_cast<float>(gSelectedSlot);
+    }
+    else {
+        angleDeg = std::atan2(gAimX, -gAimY) * (180.0f / 3.14159265f);
+    }
+
+    angleDeg += sector * static_cast<float>(steps);
+    const float rad = angleDeg * (3.14159265f / 180.0f);
+    gAimX = length * std::sin(rad);
+    gAimY = -length * std::cos(rad);
+}
+
+// ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
 static bool IsPrimaryKeyDown()
@@ -319,7 +550,7 @@ static bool IsPrimaryKeyDown()
         return true;
     if (gSettings.secondaryKey > 0 && (GetAsyncKeyState(gSettings.secondaryKey) & 0x8000))
         return true;
-    return false;
+    return IsGamepadWheelButtonDown();
 }
 
 static void UpdateSelection()
@@ -330,6 +561,35 @@ static void UpdateSelection()
 
     std::vector<SlotInfo> slots;
     CollectSlots(player, slots);
+    const int count = static_cast<int>(slots.size());
+    if (count <= 0)
+        return;
+
+    // Right stick takes over the aim vector whenever it is deflected.
+    ReadGamepadStick();
+    if (gPadAimActive) {
+        gAimX = gPadAimX;
+        gAimY = gPadAimY;
+    }
+
+    // D-Pad Up/Down steps one sector at a time (fallback + fine control).
+    if (gSettings.enableGamepad && gSettings.gamepadDPadStep) {
+        const CControllerState& state = Pads[0].NewState;
+        const bool up = (state.DPadUp != 0);
+        const bool down = (state.DPadDown != 0);
+        if (up && !gPadStepUp) {
+            RotateAimBySector(-1, count);
+        }
+        else if (down && !gPadStepDown) {
+            RotateAimBySector(1, count);
+        }
+        gPadStepUp = up;
+        gPadStepDown = down;
+    }
+    else {
+        gPadStepUp = false;
+        gPadStepDown = false;
+    }
 
     float len = std::sqrt(gAimX * gAimX + gAimY * gAimY);
     if (len < gSettings.selectDeadzone) {
@@ -344,7 +604,7 @@ static void UpdateSelection()
     }
 
     float angleDeg = std::atan2(gAimX, -gAimY) * (180.0f / 3.14159265f);
-    gSelectedSlot = SlotFromAngle(angleDeg, static_cast<int>(slots.size()));
+    gSelectedSlot = SlotFromAngle(angleDeg, count);
 }
 
 // ---------------------------------------------------------------------------
@@ -412,9 +672,16 @@ static void SuppressCombatInput()
     st.ButtonSquare = 0;
     st.ButtonTriangle = 0;
     st.LeftShoulder1 = 0;
+    st.LeftShoulder2 = 0;
     st.RightShoulder1 = 0;
+    st.RightShoulder2 = 0;
+    st.DPadUp = 0;
+    st.DPadDown = 0;
     st.DPadLeft = 0;
     st.DPadRight = 0;
+    // Freeze the right stick so the camera does not drift while selecting.
+    st.RightStickX = 0;
+    st.RightStickY = 0;
 
     CPad::NewMouseControllerState.lmb = 0;
     CPad::NewMouseControllerState.rmb = 0;
@@ -779,8 +1046,16 @@ static void ProcessWheel()
         if (gWheelOpen)
             CloseWheel(false);
         gWheelHeld = false;
+        gPadStepUp = false;
+        gPadStepDown = false;
+        gPadAimActive = false;
         return;
     }
+
+    // Keep the inventory honest: a weapon the player has emptied must leave the
+    // player, otherwise it stays equipped with 0 ammo forever.
+    if (gSettings.removeDepletedWeapons && !gWheelOpen)
+        RemoveDepletedWeapons();
 
     bool held = IsPrimaryKeyDown();
 
@@ -792,14 +1067,17 @@ static void ProcessWheel()
     }
     else if (held && gWheelOpen) {
         UpdateSelection();
-        SuppressCombatInput();
     }
     else if (!held && gWheelHeld) {
         CloseWheel(gWheelOpen);
     }
 
-    if (gWheelOpen && !IsPlayerValidForWheel())
-        CloseWheel(false);
+    if (gWheelOpen) {
+        if (!IsPlayerValidForWheel())
+            CloseWheel(false);
+        else
+            SuppressCombatInput();
+    }
 
     gWheelHeld = held;
 }
@@ -822,6 +1100,12 @@ struct LSDCXX_WeaponWheelVC {
             gSettings.showWeaponName = ini.ReadInteger("configs", "ShowWeaponName", 1);
             gSettings.disableVanillaCycle = ini.ReadInteger("configs", "DisableVanillaCycle", 1);
             gSettings.enableBackgroundBlur = ini.ReadInteger("configs", "EnableBackgroundBlur", 1);
+            gSettings.removeDepletedWeapons = ini.ReadInteger("configs", "RemoveDepletedWeapons", 1);
+            gSettings.enableGamepad = ini.ReadInteger("configs", "EnableGamepad", 1);
+            gSettings.gamepadControlsSet = ini.ReadInteger("configs", "GamepadControlsSet", 0);
+            gSettings.gamepadInvertVertical = ini.ReadInteger("configs", "GamepadInvertVertical", 0);
+            gSettings.gamepadDPadStep = ini.ReadInteger("configs", "GamepadDPadStep", 1);
+            gSettings.gamepadDeadzone = ini.ReadFloat("configs", "GamepadDeadzone", 0.25f);
             gSettings.wheelRadius = ini.ReadFloat("configs", "WheelRadius", 280.0f);
             gSettings.wheelInnerRadius = ini.ReadFloat("configs", "WheelInnerRadius", 110.0f);
             gSettings.selectDeadzone = ini.ReadFloat("configs", "SelectDeadzone", 30.0f);
@@ -834,6 +1118,8 @@ struct LSDCXX_WeaponWheelVC {
                 gSettings.wheelRadius = gSettings.wheelInnerRadius + 80.0f;
             if (gSettings.iconScale < 0.3f) gSettings.iconScale = 0.3f;
             if (gSettings.iconScale > 3.0f) gSettings.iconScale = 3.0f;
+            if (gSettings.gamepadDeadzone < 0.0f) gSettings.gamepadDeadzone = 0.0f;
+            if (gSettings.gamepadDeadzone > 0.9f) gSettings.gamepadDeadzone = 0.9f;
 
             // 纯 INI 读取武器名字，自适应 CP_ACP / CP_UTF8，无内置备用名
             for (int i = 0; i <= MAX_WEAPON_TYPE; ++i) {
@@ -865,6 +1151,7 @@ struct LSDCXX_WeaponWheelVC {
             }
 
             InstallHooks();
+            InitGamepad();
             };
 
         Events::gameProcessEvent += [] {

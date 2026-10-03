@@ -20,6 +20,8 @@ Hold a key, swipe with the mouse to highlight a weapon, and release to switch.
 - **Bullet Time**: Optional slow-motion effect while the wheel is open (default `0.15x`).
 - **Fully Customizable Localization**: Weapon display names can be configured directly in `LSDCXX_WeaponWheelVC.ini` without modifying source code or GXT tables.
 - **Seamless Control Interception**: Disables original weapon cycling, suppresses combat keys/clicks, and locks mouse look-around while selecting.
+- **Gamepad Support (GInput aware)**: Open the wheel with **L2** (GInput Control Set 1) or **D-Pad Left** (Control Set 5) and steer the selection with the **right analog stick**. Control set is auto-detected through the GInput API.
+- **Consistent Weapon Inventory**: Weapons are dropped as soon as their ammo runs out, so an emptied gun never stays equipped or keeps showing up in the wheel.
 - **Smart Category Filtering**: Option to hide empty weapon slots (`SkipEmptySlots`) to keep the wheel compact.
 
 ---
@@ -29,6 +31,7 @@ Hold a key, swipe with the mouse to highlight a weapon, and release to switch.
 - **GTA Vice City** (Compatible with **1.0 EN**, **1.1 EN**, and **Steam**)
 - [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) (`scripts/` or `plugins/` folder)
 - Custom weapon icons located at: `Grand Theft Auto Vice City\models\weapvww\` (`w00.png` - `w36.png`)
+- *(Optional)* [GInput](https://github.com/GTAmodding/GInput) (`GInputVC.asi`) for gamepad control-set detection
 
 ---
 
@@ -42,11 +45,13 @@ Hold a key, swipe with the mouse to highlight a weapon, and release to switch.
 
 ## Controls (Default)
 
-| Action | Input |
-|---|---|
-| **Open Wheel** | Hold **Q** |
-| **Select Slot** | Move **Mouse** |
-| **Equip & Close** | Release **Q** |
+| Action | Keyboard / Mouse | Gamepad |
+|---|---|---|
+| **Open Wheel** | Hold **Q** | Hold **L2** (Set 1) / **D-Pad Left** (Set 5) |
+| **Select Slot** | Move **Mouse** | Move **Right Stick** (or **D-Pad Up/Down** to step) |
+| **Equip & Close** | Release **Q** | Release **L2** / **D-Pad Left** |
+
+The gamepad button is chosen from the active **GInput control set**: Control Set 1 (PS2 Vice City style) uses **L2**, Control Set 5 (GTA IV style) uses **D-Pad Left**. Any other or undetected set accepts both.
 
 ---
 
@@ -66,9 +71,22 @@ Hold a key, swipe with the mouse to highlight a weapon, and release to switch.
 | `ShowAmmo` | `1` | Displays remaining ammo in the wheel center (`1` = Show, `0` = Hide). |
 | `ShowWeaponName` | `1` | Displays weapon name in the wheel center (`1` = Show, `0` = Hide). |
 | `DisableVanillaCycle`| `1` | Disables vanilla mouse scroll / key cycling (`1` = Disabled). |
+| `EnableBackgroundBlur`| `1` | Frosted overlay behind the wheel (`1` = On, `0` = Off). |
+| `RemoveDepletedWeapons`| `1` | Drops a weapon from the player once its ammo hits zero (`1` = On, `0` = Off). |
 | `WheelRadius` | `280.0` | Outer radius of the wheel. |
 | `WheelInnerRadius` | `110.0` | Inner cutout radius of the wheel center. |
 | `SelectDeadzone` | `30.0` | Mouse deadzone distance before changing the highlighted slot. |
+| `IconScale` | `1.0` | Weapon icon size multiplier (`0.3` ~ `3.0`). |
+
+### Gamepad (`[configs]`)
+
+| Setting | Default | Description |
+|---|---|---|
+| `EnableGamepad` | `1` | Enables gamepad support (`1` = On, `0` = Off). |
+| `GamepadControlsSet` | `0` | `0` = auto-detect via GInput, `1` = PS2 Vice City style (**L2**), `5` = GTA IV style (**D-Pad Left**). Any other value accepts both. |
+| `GamepadInvertVertical` | `0` | Inverts the right-stick vertical axis (`1` = Inverted, `0` = Normal). |
+| `GamepadDeadzone` | `0.25` | Right-stick deadzone before a direction registers (`0.0` ~ `0.9`). |
+| `GamepadDPadStep` | `1` | D-Pad Up/Down steps one slot at a time while the wheel is open (`1` = On, `0` = Off). |
 
 ### `[names]`
 
